@@ -20,17 +20,20 @@
 // using namespace std;
 
 #define MAXDATASIZE 1472
-#define FINISH_MESSAGE 
 
 struct sockaddr_in si_me, si_other;
 int s;
 socklen_t slen;
 
 // content packet packed by sender
+#define PACKET_TYPE_START 0
+#define PACKET_TYPE_FINISH -1
+#define PACKET_TYPE_DATA 1
+#define PACKET_TYPE_ACK 2
 typedef struct {
     int seq_num;
     int content_size;
-    char packet_type[10];
+    int packet_type;
     char content[MAXDATASIZE];
 } packet;
 
@@ -50,7 +53,7 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
     
     slen = sizeof (si_other);
 
-
+        
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
         diep("socket");
 
@@ -69,14 +72,14 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
 
 
     FILE *output_ptr = fopen(destinationFile, "wb");
-    
+        
     int expected_seq_num = 0;
     int last_ack = 0;
     while (true)
     {   
         char received_buff[MAXDATASIZE];
         int receive_numbytes = recvfrom(s, received_buff, MAXDATASIZE, 0, (struct sockaddr*)&si_other, &slen); // UDP: recvfrom
-        if (receive_numbytes == 0){
+        if (receive_numbytes <= 0){
             std::cout << "No New Bytes Receving; Connection End.\n";
             break;
         }
@@ -85,11 +88,11 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
         std::cout << "RECEIVED SEQ: "<< received_packet.seq_num << " TYPE: "<< received_packet.packet_type << "; RECEIVED CONTENT: " << received_packet.content;
         
         // **** If the sender inform to build a connection
-        if (received_packet.packet_type == "START"){
+        if (received_packet.packet_type == PACKET_TYPE_START){
             continue;
         }
         // **** If the sender infrom the file is ending
-        if (received_packet.packet_type == "FINISH"){
+        if (received_packet.packet_type == PACKET_TYPE_FINISH){
             send_ack(-1);
             break;
         }
@@ -106,7 +109,7 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
         // *** received_seq_num > expected_seq_num: put it into the buffer and send back the highest ack
         else if (received_packet.seq_num > expected_seq_num){
             // put into the buffer: content_buffer
-
+            
             // send ack
             send_ack(last_ack);
         }

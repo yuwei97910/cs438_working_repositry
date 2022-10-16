@@ -22,12 +22,20 @@
 
 #include <iostream>
 #define MAXDATASIZE 1472
+#define PHASE_SLOWSTART 0
+#define PHASE_CONGESTION_AVOIDANCE 1
+#define PHASE_FAST_RECOVERY 2
+// #define MAX_WINDOW_SIZE 100
 
 struct sockaddr_in si_other;
 int s;
 socklen_t slen;
 
 // content packet packed by sender
+#define PACKET_TYPE_START 0
+#define PACKET_TYPE_FINISH -1
+#define PACKET_TYPE_DATA 1
+#define PACKET_TYPE_ACK 2
 typedef struct {
     int seq_num;
     int content_size;
@@ -41,6 +49,13 @@ void diep(char *s) {
     exit(1);
 }
 
+void send_packet(FILE *file_ptr, unsigned long long int bytesToTransfer){
+    packet new_packet;
+    new_packet.packet_type = PACKET_TYPE_DATA;
+    
+    return ;
+}
+
 
 void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* filename, unsigned long long int bytesToTransfer) {
     //Open the file
@@ -52,9 +67,6 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     }
 
 	/* Determine how many bytes to transfer */
-
-
-
     slen = sizeof (si_other);
 
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
@@ -68,17 +80,147 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
         exit(1);
     }
 
-    // *** A Timer
-    // ***
+    /* Send data and receive acknowledgements on s*/
+    int max_sst = 0;
+    float sst = 0;
+    float cw = 0;
 
-    // *** Start with a handshake
-    
+    // int latest_ack = 0;
+    int expected_ack = 0;
+    int received_ack = 0;
+    int dup_ack_cnt = 0;
 
-	/* Send data and receive acknowledgements on s*/
-    
+    packet new_packet;
+    int running_phase = PHASE_SLOWSTART;
 
+    // *** A Timer (timer extend the time when receive new ack)
+    int start_time = 0;
+    bool transfer_done = true;
+    while (true)
+    {
+        bool timeout = true;
+        bool is_new_ack = false;
 
+        // *** Receive Ack
+        int receive_numbytes = recvfrom(s, &new_packet, sizeof(packet), 0, (struct sockaddr *)&si_other, (socklen_t *)&slen);
+        if (receive_numbytes <= 0){
+            printf("Connection Error.\n");
+            break;
+        }
 
+        timeout = false;
+        received_ack = new_packet.seq_num;
+        printf("received ack: %d; expected ack: %d\n", received_ack, expected_ack);
+        
+        if (received_ack >= expected_ack){
+            is_new_ack = true;
+            expected_ack = received_ack + 1;
+        }
+        else if (received_ack == -1)
+        {
+            timeout == true;
+        }
+        
+        
+        if (running_phase == PHASE_SLOWSTART){
+            // **** IF New Ack
+            if (is_new_ack){
+                cw ++;
+                dup_ack_cnt = 0;
+
+                // ***** Send Packet
+                send_packet(fp, bytesToTransfer);
+
+                // ***** Extend the timer
+            }
+            
+            // **** IF Dup Ack
+            else if (is_new_ack == false & dup_ack_cnt > 0){
+                dup_ack_cnt ++;
+                if (dup_ack_cnt >= 3){
+                    sst = cw/2;
+                    cw = sst;
+                    cw = cw + 3;
+                    running_phase = PHASE_FAST_RECOVERY;
+
+                    // ***** Send Packet
+                    send_packet(fp, bytesToTransfer);
+                }
+            }
+
+            // **** IF TIMEOUT: Resend
+            else if (timeout){
+                sst = cw/2;
+                cw = 1;
+                dup_ack_cnt = 0;
+                send_packet(fp, bytesToTransfer);
+            }
+            
+            // *** IF CW is larger than SST -> go into the CONGESTION_AVOIDANCE STAGE
+            if (cw > sst){
+                running_phase = PHASE_CONGESTION_AVOIDANCE;
+            }
+        }
+        else if (running_phase == PHASE_CONGESTION_AVOIDANCE){
+            // **** IF New Ack
+            if (is_new_ack){
+                cw = cw + 1/cw;
+                dup_ack_cnt = 0;
+                send_packet(fp, bytesToTransfer);
+            }
+            // **** IF Dup Ack - >= 3: Resend oder(Ack+1) packet
+            else if (is_new_ack == false & dup_ack_cnt > 0){
+                dup_ack_cnt ++;
+                if (dup_ack_cnt >= 3){
+                    sst = cw/2;
+                    cw = sst;
+                    cw = cw + 3;
+                    send_packet(fp, bytesToTransfer);
+
+                    running_phase = PHASE_FAST_RECOVERY;
+                }
+            }
+            // **** IF TIMEOUT: Resend
+            else if (timeout){
+                sst = cw/2;
+                cw = 1;
+                dup_ack_cnt = 0;
+                send_packet(fp, bytesToTransfer);
+            }
+        }
+        else if (running_phase == PHASE_FAST_RECOVERY){
+            // **** IF New Ack
+            if (is_new_ack){
+                cw = sst;
+                dup_ack_cnt = 0;
+                send_packet(fp, bytesToTransfer);
+            }
+            // **** IF Dup Ack - >= 3: Resend oder(Ack+1) packet
+            else if (dup_ack_cnt > 0){
+                cw = cw + 1.0;
+                send_packet(fp, bytesToTransfer);
+            }
+            // **** IF TIMEOUT: Resend
+            else if (timeout){
+                sst = cw/2;
+                cw = 1;
+                dup_ack_cnt = 0;
+                send_packet(fp, bytesToTransfer);
+                running_phase = PHASE_SLOWSTART;
+
+                printf("PHASE_FAST_RECOVERY: TIMEOUT");
+            }
+        }
+
+        if (transfer_done){
+            break;
+        }
+    }
+    // *** Sent the ending packet
+    packet packet_end;
+    packet_end.packet_type = PA
+
+    // *** End the connection
     printf("Closing the socket\n");
     close(s);
     return;
