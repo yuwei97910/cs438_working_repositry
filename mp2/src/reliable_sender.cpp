@@ -18,7 +18,6 @@
 #include <sys/stat.h>
 #include <signal.h>
 #include <string.h>
-#include <sys/time.h>
 
 #include <time.h>
 #include <sys/time.h>
