@@ -21,7 +21,9 @@
 #include <sys/time.h>
 
 #include <iostream>
-#define MAXDATASIZE 1472
+// #define MAXDATASIZE 1472
+#define MAXDATASIZE 1000
+#define MAXWINDOWSIZE 1000
 #define PHASE_SLOWSTART 0
 #define PHASE_CONGESTION_AVOIDANCE 1
 #define PHASE_FAST_RECOVERY 2
@@ -42,23 +44,42 @@ typedef struct {
     char packet_type[10];
     char content[MAXDATASIZE];
 } packet;
-
+packet packet_buffer[MAXWINDOWSIZE];
 
 void diep(char *s) {
     perror(s);
     exit(1);
 }
 
-void send_packet(FILE *file_ptr, int , int expected_ack_num, unsigned long long int bytesToTransfer){
-    for (i=){
+int pack_packet(FILE *file_ptr, unsigned long long int bytesToTransfer){
+    int next_bytes = 0;
+    int total_packet_cnt = 0;
+    while (!feof(fp) & next_bytes < bytesToTransfer){
+        if (next_bytes >= bytesToTransfer){
+            return 0;
+        }
+        fread(packet_buffer[i].content, 1, min(MAXDATASIZE, bytesToTransfer - next_bytes), fp);
+        packet_buffer[i].seq_num = i;
+        packet_buffer[i].packet_type = PACKET_TYPE_DATA;
+        packet_buffer[i].content_size = min(MAXDATASIZE, bytesToTransfer - next_bytes);
 
+        next_bytes += MAXDATASIZE;
+        total_packet_cnt ++;
     }
-    packet new_packet;
-    new_packet.packet_type = PACKET_TYPE_DATA;
-    new_packet.seq_num = 
-    return ;
+    return total_packet_cnt;
 }
 
+void send_packet(int expected_ack){
+    if (timeout == 1) {
+        sendto(s, &(packetbuffer[expected_ack % MAXWINSIZE]), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
+    }
+    else {
+        for (int i = expected_ack; i < (expected_ack + int(cw)); i++)
+        {
+            sendto(s, &(packet_buffer[i % MAXWINSIZE]), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
+        }
+    }
+}
 
 void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* filename, unsigned long long int bytesToTransfer) {
     //Open the file
@@ -69,10 +90,10 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
         exit(1);
     }
 
+    // *** pack the file into packets
+    int total_packet_cnt = pack_packet(fp, bytesToTransfer);
+
 	/* Determine how many bytes to transfer */
-    
-
-
     slen = sizeof (si_other);
 
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
@@ -91,6 +112,7 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     float sst = 0;
     float cw = 0;
 
+    int base_sent_packet = 0;
     int expected_ack_num = 0;
     int received_ack_num = 0;
     int dup_ack_cnt = 0;
@@ -121,10 +143,19 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
             is_new_ack = true;
             expected_ack_num = received_ack_num + 1;
         }
-        else if (received_ack_num == -1)
-        {
-            timeout == true;
+        else if (received_ack_num == -1){
+            // timeout == true;
+            // Transfer end 
+            break;
         }
+        else if (received_ack_num < expected_ack_num - 1){
+            continue;
+        }
+        else if (received_ack_num == expected_ack_num - 1)
+        {
+            dup_ack_cnt ++;
+        }
+        
         
         
         if (running_phase == PHASE_SLOWSTART){
@@ -141,7 +172,6 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
             
             // **** IF Dup Ack
             else if (is_new_ack == false & dup_ack_cnt > 0){
-                dup_ack_cnt ++;
                 if (dup_ack_cnt >= 3){
                     sst = cw/2;
                     cw = sst;
@@ -175,7 +205,6 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
             }
             // **** IF Dup Ack - >= 3: Resend oder(Ack+1) packet
             else if (is_new_ack == false & dup_ack_cnt > 0){
-                dup_ack_cnt ++;
                 if (dup_ack_cnt >= 3){
                     sst = cw/2;
                     cw = sst;
