@@ -52,13 +52,13 @@ void send_ack(int ack_num){
     }
     else{
         ack_packet.packet_type = PACKET_TYPE_ACK;
-        while (received_buffer[ack_num] == 1){
+        while (received_buffer[ack_num%MAXWINDOWSIZE] == 1){
             std::cout << ack_num <<"\n";
             ack_num = ack_num + 1;
         }
     }
     // strcpy(ack_packet.content, "ACK");
-    std::cout << "!!!!! ACK NUM: "<<ack_num<<"\n";
+    std::cout << "-> SEND ACK NUM: "<<ack_num<<"\n";
     ack_packet.seq_num = ack_num;
     sendto(s, &ack_packet, sizeof(packet), 0, (struct sockaddr *) &si_other, slen);
 }
@@ -90,7 +90,7 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
     int last_ack = 0;
     while (true)
     {   
-        std::cout << "\nSTART RECEIVEING...\n\n";
+        std::cout << "\n\n===========================\nSTART RECEIVEING...\n";
 
         char received_buff[MAXDATASIZE];
         int receive_numbytes = recvfrom(s, &received_buff, MAXDATASIZE, 0, (struct sockaddr *)&si_other, (socklen_t *)&slen); // UDP: recvfrom
@@ -101,7 +101,7 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
         }
         std::cout << "RECEIVING:" << receive_numbytes <<" Bytes\n";
         memcpy(&received_packet, received_buff, receive_numbytes);
-        std::cout << "RECEIVED SEQ: "<< received_packet.seq_num <<" expected seq num: "<< last_ack << " TYPE: "<< received_packet.packet_type <<"\n";// << "; RECEIVED CONTENT: " << received_packet.content;
+        std::cout << "RECEIVED SEQ: "<< received_packet.seq_num <<" expected seq num: "<< last_ack << " TYPE: "<< received_packet.packet_type <<"\n" << "; RECEIVED CONTENT:\n<start>\n" << received_packet.content<<"\n<end>\n";
         
         // **** If the sender inform to build a connection
         if (received_packet.packet_type == PACKET_TYPE_START){
@@ -119,18 +119,18 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
 
         // *** received_seq_num >= last_ack: write the content and send back the ack; update the highest ack as this ack
         if (received_packet.seq_num >= last_ack){
-            received_buffer[received_packet.seq_num] = 1;
-            packet_buffer[received_packet.seq_num] = received_packet;
+            received_buffer[received_packet.seq_num%MAXWINDOWSIZE] = 1;
+            packet_buffer[received_packet.seq_num%MAXWINDOWSIZE] = received_packet;
 
             // send ack
             send_ack(last_ack);
 
             // write into the output file
             // std::cout << "Writing the content:\n<start>\n"<<received_packet.content <<"\n<end>\n\n";
-            while (received_buffer[last_ack] == 1){
+            while (received_buffer[last_ack%MAXWINDOWSIZE+1] == 1){
                 last_ack = last_ack + 1;
-                fwrite(packet_buffer[last_ack].content, 1, packet_buffer[last_ack].content_size, output_ptr);
-                // received_buffer[last_ack] = 0;
+                fwrite(packet_buffer[last_ack%MAXWINDOWSIZE].content, 1, packet_buffer[last_ack%MAXWINDOWSIZE].content_size, output_ptr);
+                received_buffer[last_ack] = 0;
             }
         }
         // *** received_seq_num < last_ack: already received, send the highest ack
