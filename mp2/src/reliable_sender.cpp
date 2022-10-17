@@ -49,10 +49,13 @@ void diep(char *s) {
     exit(1);
 }
 
-void send_packet(FILE *file_ptr, unsigned long long int bytesToTransfer){
+void send_packet(FILE *file_ptr, int , int expected_ack_num, unsigned long long int bytesToTransfer){
+    for (i=){
+
+    }
     packet new_packet;
     new_packet.packet_type = PACKET_TYPE_DATA;
-    
+    new_packet.seq_num = 
     return ;
 }
 
@@ -67,6 +70,9 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     }
 
 	/* Determine how many bytes to transfer */
+    
+
+
     slen = sizeof (si_other);
 
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
@@ -85,12 +91,11 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     float sst = 0;
     float cw = 0;
 
-    // int latest_ack = 0;
-    int expected_ack = 0;
-    int received_ack = 0;
+    int expected_ack_num = 0;
+    int received_ack_num = 0;
     int dup_ack_cnt = 0;
 
-    packet new_packet;
+    packet received_packet;
     int running_phase = PHASE_SLOWSTART;
 
     // *** A Timer (timer extend the time when receive new ack)
@@ -102,21 +107,21 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
         bool is_new_ack = false;
 
         // *** Receive Ack
-        int receive_numbytes = recvfrom(s, &new_packet, sizeof(packet), 0, (struct sockaddr *)&si_other, (socklen_t *)&slen);
+        int receive_numbytes = recvfrom(s, &received_packet, sizeof(packet), 0, (struct sockaddr *)&si_other, (socklen_t *)&slen);
         if (receive_numbytes <= 0){
             printf("Connection Error.\n");
             break;
         }
 
         timeout = false;
-        received_ack = new_packet.seq_num;
-        printf("received ack: %d; expected ack: %d\n", received_ack, expected_ack);
+        received_ack_num = received_packet.seq_num;
+        printf("received ack: %d; expected ack: %d\n", received_ack_num, expected_ack_num);
         
-        if (received_ack >= expected_ack){
+        if (received_ack_num >= expected_ack_num){
             is_new_ack = true;
-            expected_ack = received_ack + 1;
+            expected_ack_num = received_ack_num + 1;
         }
-        else if (received_ack == -1)
+        else if (received_ack_num == -1)
         {
             timeout == true;
         }

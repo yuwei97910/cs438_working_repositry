@@ -43,17 +43,19 @@ void diep(char *s) {
 }
 
 void send_ack(int ack_num){
-    char buf[MAXDATASIZE];
-
-    memcpy(buf, &ack_num, sizeof(packet));
-    sendto(s, buf, sizeof(packet), 0, (struct sockaddr *) &si_other, slen);
+    packet ack_packet;
+    ack_packet.seq_num = ack_num;
+    if (ack_num == -1){
+        ack_packet.packet_type = PACKET_TYPE_FINISH;
+    }
+    sendto(s, &ack_packet, sizeof(packet), 0, (struct sockaddr *) &si_other, slen);
 }
 
 void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
     
     slen = sizeof (si_other);
 
-        
+
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
         diep("socket");
 
@@ -69,7 +71,6 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
 
 	/* Now receive data and send acknowledgements */
     // *** buffer for the receiver
-
 
     FILE *output_ptr = fopen(destinationFile, "wb");
         
@@ -96,7 +97,7 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
             send_ack(-1);
             break;
         }
-
+    
         // *** received_seq_num = expected_seq_num: write the content and send back the ack; update the highest ack as this ack
         if (received_packet.seq_num == expected_seq_num){
             // write into the output file
