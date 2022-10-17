@@ -20,11 +20,14 @@
 #include <string.h>
 #include <sys/time.h>
 
+#include <time.h>
+#include <sys/time.h>
 #include <iostream>
 
 // #define MAXDATASIZE 1472
-#define MAXDATASIZE 100
-#define MAXWINDOWSIZE 100
+#define MAXDATASIZE 1000
+#define MAXWINDOWSIZE 1000
+#define MAXTIME 5
 #define PHASE_SLOWSTART 0
 #define PHASE_CONGESTION_AVOIDANCE 1
 #define PHASE_FAST_RECOVERY 2
@@ -59,17 +62,6 @@ void diep(char *s) {
     exit(1);
 }
 
-// void pack_packet(FILE *file_ptr, int packet_pos, unsigned long long int bytesToTransfer){
-//     int next_pos = packet_pos + MAXDATASIZE;
-//     int read_bytes = min(MAXDATASIZE, bytesToTransfer-next_pos);
-//     if (read_bytes <= 0) return;
-
-//     fread(packet_buffer[packet_pos].content, 1, read_bytes, file_ptr);
-//     packet_buffer[packet_pos].seq_num = packet_pos;
-//     packet_buffer[packet_pos].packet_type = PACKET_TYPE_DATA;
-//     packet_buffer[packet_pos].content_size = read_bytes;
-// }
-
 int send_packet(FILE *file_ptr, int expected_ack, float cw, unsigned long long int bytesToTransfer, bool timeout=false){
     int sent_bytes = 0;
     int packets_to_sent = min(int(expected_ack + int(cw)), int(bytesToTransfer/MAXWINDOWSIZE));
@@ -103,11 +95,7 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
         printf("Could not open file to send.\n");
         exit(1);
     }
-    std::cout << "Open file: " << filename << "\n";
-
-    // *** pack the file into packets
-    // total_packet_cnt = pack_packet(file_ptr, bytesToTransfer);
-    // std::cout << "\nTotal Packet Count: " << total_packet_cnt << "\n";
+    // std::cout << "Open file: " << filename << "\n";
 
 	/* Determine how many bytes to transfer */
     slen = sizeof (si_other);
@@ -135,8 +123,14 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     int running_phase = PHASE_SLOWSTART;
 
     // *** A Timer (timer extend the time when receive new ack)
-    int start_time = 0;
-    bool transfer_done = false;
+    struct timeval timer;
+    timer.tv_sec = 0;
+    timer.tv_usec = MAXTIME * 1000;
+    int ret = setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timer, sizeof(timer));
+    if (ret==-1){
+        perror("SET TIMEOUT");
+    }
+
     int send_bytes = 0;
 
     packet start_packet;
@@ -156,8 +150,9 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
         std::cout << "\n========================================\nReceived bytes: " << receive_numbytes <<" Type: "<< received_packet.packet_type<<" (PACKET_TYPE_ACK id 2) \n";
 
         if (receive_numbytes == -1){
-            printf("Connection Error.\n");
-            break;
+            timeout = true;
+            dup_ack_cnt = 0;
+            is_new_ack = 0;
         }
         
         if (received_packet.packet_type == PACKET_TYPE_START){
@@ -167,16 +162,15 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
         }
 
         received_ack_num = received_packet.seq_num;
-        std::cout << "Received ack: " << received_ack_num << "; Expected ack: "<<  expected_ack_num << "\n";
-        if (received_ack_num >= int(bytesToTransfer / MAXWINDOWSIZE)) break;
+        std::cout << "Received ack: " << received_ack_num << "; Expected ack: "<<  expected_ack_num << "\n" << "CURRENT TIME: "<<std::time(0)<<"\n";
+        if (received_ack_num >= int(bytesToTransfer / MAXWINDOWSIZE)) break; // All packages are transferrd, End
 
         if (received_ack_num >= expected_ack_num){
             is_new_ack = true;
             expected_ack_num = received_ack_num;
         }
         else if (received_ack_num == -1){
-            timeout == true;
-            // Transfer end 
+            timeout = true;
         }
         else if (received_ack_num < expected_ack_num-1){
             continue;
@@ -185,11 +179,6 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
         {
             dup_ack_cnt ++;
         }
-
-        // if (received_ack_num >= total_packet_cnt){
-        //     transfer_done = true;
-        //     break;
-        // }
         
         if (running_phase == PHASE_SLOWSTART){
             // **** IF New Ack
@@ -215,9 +204,9 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
                     send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
                 }
             }
-
             // **** IF TIMEOUT: Resend
             else if (timeout){
+                std::cout << "----PHASE: " << running_phase << " TIMEOUT.\n";
                 sst = cw/2;
                 cw = 1;
                 dup_ack_cnt = 0;
@@ -249,6 +238,7 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
             }
             // **** IF TIMEOUT: Resend
             else if (timeout){
+                std::cout << "----PHASE: " << running_phase << " TIMEOUT.\n";
                 sst = cw/2;
                 cw = 1;
                 dup_ack_cnt = 0;
@@ -269,13 +259,12 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
             }
             // **** IF TIMEOUT: Resend
             else if (timeout){
+                std::cout << "----PHASE: " << running_phase << " TIMEOUT.\n";
                 sst = cw/2;
                 cw = 1;
                 dup_ack_cnt = 0;
                 send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer, timeout);
                 running_phase = PHASE_SLOWSTART;
-
-                printf("PHASE_FAST_RECOVERY: TIMEOUT");
             }
         }
     }
@@ -283,7 +272,7 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     packet packet_end;
     packet_end.packet_type = PACKET_TYPE_FINISH;
     packet_end.seq_num = -1;
-    std::cout << "SENDING THE END POCKET: " << packet_end.packet_type << "\n";
+    std::cout << "\n\nSENDING THE END POCKET: " << packet_end.packet_type << "\n";
     sendto(s, &(packet_end), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
 
     // *** End the connection

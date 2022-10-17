@@ -19,8 +19,8 @@
 #include <iostream>
 // using namespace std;
 
-#define MAXDATASIZE 100
-#define MAXWINDOWSIZE 100
+#define MAXDATASIZE 1000
+#define MAXWINDOWSIZE 1000
 
 struct sockaddr_in si_me, si_other;
 int s;
@@ -45,7 +45,7 @@ void diep(char *s) {
     exit(1);
 }
 
-void send_ack(int ack_num){
+int send_ack(int ack_num){
     packet ack_packet;
     if (ack_num == -1){
         ack_packet.packet_type = PACKET_TYPE_FINISH;
@@ -60,7 +60,9 @@ void send_ack(int ack_num){
     // strcpy(ack_packet.content, "ACK");
     std::cout << "-> SEND ACK NUM: "<<ack_num<<"\n";
     ack_packet.seq_num = ack_num;
-    sendto(s, &ack_packet, sizeof(packet), 0, (struct sockaddr *) &si_other, slen);
+    int send_bytes = sendto(s, &ack_packet, sizeof(packet), 0, (struct sockaddr *) &si_other, slen);
+
+    return send_bytes;
 }
 
 void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
@@ -113,7 +115,7 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
         }
         // **** If the sender infrom the file is ending
         if (received_packet.packet_type == PACKET_TYPE_FINISH){
-            send_ack(-1);
+            send_bytes = send_ack(-1);
             break;
         }
 
@@ -123,7 +125,7 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
             packet_buffer[received_packet.seq_num%MAXWINDOWSIZE] = received_packet;
 
             // send ack
-            send_ack(last_ack);
+            send_bytes = send_ack(last_ack);
 
             // write into the output file
             // std::cout << "Writing the content:\n<start>\n"<<received_packet.content <<"\n<end>\n\n";
@@ -136,8 +138,9 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
         // *** received_seq_num < last_ack: already received, send the highest ack
         else if (received_packet.seq_num < last_ack){
             // send ack
-            send_ack(last_ack);
+            send_bytes = send_ack(last_ack);
         }
+        std::cout << send_bytes << " are send.\n";
     }
     fclose(output_ptr);
 
