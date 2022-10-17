@@ -23,8 +23,8 @@
 #include <iostream>
 
 // #define MAXDATASIZE 1472
-#define MAXDATASIZE 1000
-#define MAXWINDOWSIZE 1000
+#define MAXDATASIZE 100
+#define MAXWINDOWSIZE 100
 #define PHASE_SLOWSTART 0
 #define PHASE_CONGESTION_AVOIDANCE 1
 #define PHASE_FAST_RECOVERY 2
@@ -32,20 +32,23 @@
 
 struct sockaddr_in si_other;
 int s;
-socklen_t slen;
+int slen;
 
 // content packet packed by sender
 #define PACKET_TYPE_START 0
 #define PACKET_TYPE_FINISH -1
 #define PACKET_TYPE_DATA 1
 #define PACKET_TYPE_ACK 2
-typedef struct {
+typedef struct packet{
     int seq_num;
     int content_size;
     int packet_type;
     char content[MAXDATASIZE];
 } packet;
-packet packet_buffer[MAXWINDOWSIZE];
+packet packet_queue[MAXWINDOWSIZE];
+int total_packet_cnt = 0;
+// packet packet_buffer[MAXWINDOWSIZE];
+// int sent_buffer[MAXWINDOWSIZE];
 
 void diep(char *s) {
     perror(s);
@@ -55,31 +58,35 @@ void diep(char *s) {
 int pack_packet(FILE *file_ptr, unsigned long long int bytesToTransfer){
     int next_bytes = 0;
     int i = 0;
-    while (!feof(file_ptr) & next_bytes < bytesToTransfer){
+    while (!feof(file_ptr) and (next_bytes < bytesToTransfer)){
         if (next_bytes >= bytesToTransfer){
             return 0;
         }
-        fread(packet_buffer[i].content, 1, min(MAXDATASIZE, bytesToTransfer - next_bytes), file_ptr);
-        packet_buffer[i].seq_num = i;
-        packet_buffer[i].packet_type = PACKET_TYPE_DATA;
-        packet_buffer[i].content_size = min(MAXDATASIZE, bytesToTransfer - next_bytes);
-
+        fread(packet_queue[i].content, 1, min(MAXDATASIZE, bytesToTransfer - next_bytes), file_ptr);
+        packet_queue[i].seq_num = i;
+        packet_queue[i].packet_type = PACKET_TYPE_DATA;
+        packet_queue[i].content_size = min(MAXDATASIZE, bytesToTransfer - next_bytes);
+        // std::cout << "i: "<< i << "packet buffer type: "<< packet_queue[i].packet_type<<"\n";
+        // std::cout << "packet buffer content: "<< packet_queue[i].content<<"\n";
         next_bytes += MAXDATASIZE;
         i ++;
     }
-    return i;
+    return i-1;
 }
 
-void send_packet(int expected_ack, float cw, bool timeout=false){
+int send_packet(int expected_ack, float cw, bool timeout=false){
+    int sent_bytes = 0;
     if (timeout) {
-        sendto(s, &(packet_buffer[expected_ack % MAXWINDOWSIZE]), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
+        sendto(s, &(packet_queue[expected_ack]), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
     }
     else {
-        for (int i = expected_ack; i < (expected_ack + cw); i++)
-        {
-            sendto(s, &(packet_buffer[i % MAXWINDOWSIZE]), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
+        for (int i = expected_ack; i < min(int(expected_ack + int(cw)), total_packet_cnt); i++){
+            sent_bytes = sendto(s, &(packet_queue[i]), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
+            std::cout << "### -> Sent packet Seq: " << i << " type " << packet_queue[i].packet_type << " sent size:" << packet_queue[i].content_size << "\n";
+            //std::cout << "content:\n<start>\n" << packet_queue[i].content << "\n<end>\n\n";
         }
     }
+    return sent_bytes;
 }
 
 void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* filename, unsigned long long int bytesToTransfer) {
@@ -87,12 +94,14 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     FILE *file_ptr;
     file_ptr = fopen(filename, "rb");
     if (file_ptr == NULL) {
-        printf("Could not open file to send.");
+        printf("Could not open file to send.\n");
         exit(1);
     }
+    std::cout << "Open file: " << filename << "\n";
 
     // *** pack the file into packets
-    int total_packet_cnt = pack_packet(file_ptr, bytesToTransfer);
+    total_packet_cnt = pack_packet(file_ptr, bytesToTransfer);
+    std::cout << "\nTotal Packet Count: " << total_packet_cnt << "\n";
 
 	/* Determine how many bytes to transfer */
     slen = sizeof (si_other);
@@ -100,54 +109,66 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
         diep("socket");
 
-    memset((char *) &si_other, 0, sizeof (si_other));
+    memset((char *)&si_other, 0, sizeof(si_other));
     si_other.sin_family = AF_INET;
     si_other.sin_port = htons(hostUDPport);
-    if (inet_aton(hostname, &si_other.sin_addr) == 0) {
+    if (inet_aton(hostname, &si_other.sin_addr) == 0){
         fprintf(stderr, "inet_aton() failed\n");
         exit(1);
     }
 
     /* Send data and receive acknowledgements on s*/
-    int max_sst = 0;
-    float sst = 0;
-    float cw = 0;
+    float sst = 100;
+    float cw = 1;
 
-    int base_sent_packet = 0;
+    packet received_packet;
+    // int base_sent_packet = 0;
     int expected_ack_num = 0;
     int received_ack_num = 0;
     int dup_ack_cnt = 0;
-
-    packet received_packet;
     int running_phase = PHASE_SLOWSTART;
 
     // *** A Timer (timer extend the time when receive new ack)
     int start_time = 0;
-    bool transfer_done = true;
+    bool transfer_done = false;
+    int send_bytes = 0;
+
+    packet start_packet;
+    start_packet.packet_type = PACKET_TYPE_START;
+    start_packet.seq_num = 0;
+    send_bytes = sendto(s, &start_packet, sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
+    
+    std::cout << "TRY SENDING: " << send_bytes << "bytes of start message\n\n";
+
     while (true)
     {
-        bool timeout = true;
+        // *** Receive Ack
+        bool timeout = false;
         bool is_new_ack = false;
 
-        // *** Receive Ack
         int receive_numbytes = recvfrom(s, &received_packet, sizeof(packet), 0, (struct sockaddr *)&si_other, (socklen_t *)&slen);
-        if (receive_numbytes <= 0){
+        std::cout << "\n========================================\nReceived bytes: " << receive_numbytes <<" Type: "<< received_packet.packet_type<<" (PACKET_TYPE_ACK id 2) \n";
+
+        if (receive_numbytes == -1){
             printf("Connection Error.\n");
             break;
         }
-
-        timeout = false;
-        received_ack_num = received_packet.seq_num;
-        printf("received ack: %d; expected ack: %d\n", received_ack_num, expected_ack_num);
         
+        if (received_packet.packet_type == PACKET_TYPE_START){
+            send_packet(expected_ack_num, cw);
+            expected_ack_num = 1;
+            continue;
+        }
+
+        received_ack_num = received_packet.seq_num;
+        std::cout << "Received ack: " << received_ack_num << "; Expected ack: "<<  expected_ack_num << "\n";
         if (received_ack_num >= expected_ack_num){
             is_new_ack = true;
-            expected_ack_num = received_ack_num + 1;
+            expected_ack_num = received_ack_num;
         }
         else if (received_ack_num == -1){
-            // timeout == true;
+            timeout == true;
             // Transfer end 
-            break;
         }
         else if (received_ack_num < expected_ack_num - 1){
             continue;
@@ -157,7 +178,10 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
             dup_ack_cnt ++;
         }
         
-        
+        if (received_ack_num >= total_packet_cnt){
+            transfer_done = true;
+            break;
+        }
         
         if (running_phase == PHASE_SLOWSTART){
             // **** IF New Ack
@@ -189,7 +213,7 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
                 sst = cw/2;
                 cw = 1;
                 dup_ack_cnt = 0;
-                send_packet(expected_ack_num, cw), timeout;
+                send_packet(expected_ack_num, cw, timeout);
             }
             
             // *** IF CW is larger than SST -> go into the CONGESTION_AVOIDANCE STAGE
@@ -246,16 +270,12 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
                 printf("PHASE_FAST_RECOVERY: TIMEOUT");
             }
         }
-
-        if (transfer_done){
-            break;
-        }
     }
     // *** Sent the ending packet
     packet packet_end;
     packet_end.packet_type = PACKET_TYPE_FINISH;
     packet_end.seq_num = -1;
-    
+    std::cout << "SENDING THE END POCKET: " << packet_end.packet_type << "\n";
     sendto(s, &(packet_end), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
 
     // *** End the connection
