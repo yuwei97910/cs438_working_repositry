@@ -24,9 +24,9 @@
 #include <iostream>
 
 // #define MAXDATASIZE 1472
-#define MAXDATASIZE 1000
-#define MAXWINDOWSIZE 1000
-#define MAXTIME 5
+#define MAXDATASIZE 800
+#define MAXWINDOWSIZE 300
+#define MAXTIME 90000
 #define PHASE_SLOWSTART 0
 #define PHASE_CONGESTION_AVOIDANCE 1
 #define PHASE_FAST_RECOVERY 2
@@ -47,41 +47,67 @@ typedef struct packet{
     int packet_type;
     char content[MAXDATASIZE];
 } packet;
-packet packet_queue[MAXWINDOWSIZE];
 packet packet_buffer[MAXWINDOWSIZE];
-bool packet_buffer_check[MAXWINDOWSIZE];
+int packet_buffer_check[MAXWINDOWSIZE];
+unsigned long long int accumulated_bytes = 0;
 
-// int total_packet_cnt = 0;
-int accumulated_bytes = 0;
-// packet packet_buffer[MAXWINDOWSIZE];
-// int sent_buffer[MAXWINDOWSIZE];
 
 void diep(char *s) {
     perror(s);
     exit(1);
 }
 
-int send_packet(FILE *file_ptr, int expected_ack, float cw, unsigned long long int bytesToTransfer, bool timeout=false){
+int send_packet(FILE *file_ptr, int base_packet_id, float cw, unsigned long long int bytesToTransfer, bool timeout=false){
     int sent_bytes = 0;
-    int packets_to_sent = min(int(expected_ack + int(cw)), int(bytesToTransfer/MAXWINDOWSIZE));
+    // int packets_to_sent = min(int(base_packet_id + int(cw)), int(bytesToTransfer/MAXWINDOWSIZE));
+    // std::cout << "based id: "<< base_packet_id << " cw: "<< int(cw) << " bytesToTransfer: "<< bytesToTransfer <<" Max packet least: " << int((bytesToTransfer-accumulated_bytes)/MAXWINDOWSIZE)+1 << "\n";
+    int packets_to_sent = int(base_packet_id + int(cw));
+    // if ((bytesToTransfer-accumulated_bytes) < MAXWINDOWSIZE){
+    //     packets_to_sent = 2;
+    // }
+    // else if (bytesToTransfer-accumulated_bytes == 0) {
+    //     std::cout <<"Base:" << base_packet_id << " No packet to send\n";
+    //     packets_to_sent = 1;
+    //     // return 0;
+    // }
+    
+    // std::cout << "PACKET TO SEND: "<< packets_to_sent << "\n";
+
     if (timeout) {
-        sendto(s, &(packet_buffer[expected_ack % MAXWINDOWSIZE]), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
+        // std::cout << "TIMEOUT SENDING "<< base_packet_id <<" PACKET AGAIN; In QUEUE:"<< base_packet_id % MAXWINDOWSIZE << " BUFFER SEQ: "<< packet_buffer[base_packet_id % MAXWINDOWSIZE].seq_num << " BUFFER SIZE: " << packet_buffer[base_packet_id % MAXWINDOWSIZE].content_size << "\n";
+        // std::cout << "packet_buffer_check[i % MAXWINDOWSIZE]: "<<packet_buffer_check[base_packet_id % MAXWINDOWSIZE] <<"\n";
+        // std::cout << "packet_buffer_check[i-1 % MAXWINDOWSIZE]: "<<packet_buffer_check[(base_packet_id-1) % MAXWINDOWSIZE] <<"\n";
+        // std::cout << "packet_buffer_check[i+1 % MAXWINDOWSIZE]: "<<packet_buffer_check[(base_packet_id+1) % MAXWINDOWSIZE] <<"\n";
+        sent_bytes = sendto(s, &(packet_buffer[base_packet_id % MAXWINDOWSIZE]), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
+        return sent_bytes;
     }
-    else {
-        for (int i = expected_ack; i < packets_to_sent; i++){
-            int read_bytes = min(MAXDATASIZE, bytesToTransfer-accumulated_bytes);
-            if (read_bytes <= 0) break;
-
-            fread(packet_buffer[i % MAXWINDOWSIZE].content, 1, read_bytes, file_ptr);
-            packet_buffer[i % MAXWINDOWSIZE].seq_num = i;
-            packet_buffer[i % MAXWINDOWSIZE].packet_type = PACKET_TYPE_DATA;
-            packet_buffer[i % MAXWINDOWSIZE].content_size = read_bytes;
-            accumulated_bytes = accumulated_bytes + MAXDATASIZE;
-
-            sent_bytes = sendto(s, &(packet_buffer[i % MAXWINDOWSIZE]), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
-            std::cout << "### -> Sent packet Seq: " << i << " type " << packet_buffer[i % MAXWINDOWSIZE].packet_type << " sent size:" << packet_buffer[i % MAXWINDOWSIZE].content_size << "\n";
-            //std::cout << "content:\n<start>\n" << packet_queue[i].content << "\n<end>\n\n";
+    std::cout <<"Base:" << base_packet_id << " packets to send: "<< packets_to_sent<< "\n";
+    for (int i=base_packet_id; i<packets_to_sent; i++){
+        if (packet_buffer_check[i % MAXWINDOWSIZE] == i){
+            // std::cout << "PACKET: " << i << " ;in buffer - " << i % MAXWINDOWSIZE << " is already sent.\n";
+            continue;
         }
+        // std::cout << "ACCUMULATED READ: " << accumulated_bytes <<"\n";
+        int read_bytes = min(MAXDATASIZE, int(bytesToTransfer-accumulated_bytes));
+        // std::cout << "READ BYTES: " << read_bytes <<"\n";
+        if (read_bytes < 0){
+            read_bytes = 0;
+            strcpy(packet_buffer[i % MAXWINDOWSIZE].content, "");
+        }
+        else {
+            fread(packet_buffer[i % MAXWINDOWSIZE].content, 1, read_bytes, file_ptr);
+        }
+        
+        packet_buffer[i % MAXWINDOWSIZE].seq_num = i;
+        packet_buffer[i % MAXWINDOWSIZE].packet_type = PACKET_TYPE_DATA;
+        packet_buffer[i % MAXWINDOWSIZE].content_size = read_bytes;
+        accumulated_bytes = accumulated_bytes + MAXDATASIZE;
+
+        sent_bytes = sendto(s, &(packet_buffer[i % MAXWINDOWSIZE]), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
+        packet_buffer_check[i % MAXWINDOWSIZE] = i;
+
+        // std::cout << "### -> Sent packet Seq: " << i << " type " << packet_buffer[i % MAXWINDOWSIZE].packet_type << " sent size:" << packet_buffer[i % MAXWINDOWSIZE].content_size << "\n";
+        // std::cout << "SNED CONTENT:\n<start>\n" << packet_buffer[i % MAXWINDOWSIZE].content<<"\n<end>\n";
     }
     return sent_bytes;
 }
@@ -94,7 +120,6 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
         printf("Could not open file to send.\n");
         exit(1);
     }
-    // std::cout << "Open file: " << filename << "\n";
 
 	/* Determine how many bytes to transfer */
     slen = sizeof (si_other);
@@ -117,99 +142,94 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     packet received_packet;
     // int base_sent_packet = 0;
     int expected_ack_num = 0;
-    int received_ack_num = 0;
     int dup_ack_cnt = 0;
+    int timeout_cnt = 0;
     int running_phase = PHASE_SLOWSTART;
-
+    bool all_packet_sent = false;
     // *** A Timer (timer extend the time when receive new ack)
     struct timeval timer;
     timer.tv_sec = 0;
-    timer.tv_usec = MAXTIME * 1000;
+    timer.tv_usec = MAXTIME;
     int ret = setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timer, sizeof(timer));
     if (ret==-1){
         perror("SET TIMEOUT");
     }
 
+    for (int i=0; i<MAXWINDOWSIZE; i++){
+        packet_buffer_check[i] = -1;
+
+    }
+
     int send_bytes = 0;
-
-    packet start_packet;
-    start_packet.packet_type = PACKET_TYPE_START;
-    start_packet.seq_num = 0;
-    send_bytes = sendto(s, &start_packet, sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
-    
-    std::cout << "TRY SENDING: " << send_bytes << "bytes of start message\n\n";
-
+    send_bytes = send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
     while (true)
     {
         // *** Receive Ack
         bool timeout = false;
         bool is_new_ack = false;
+        int received_ack_num = -1;
 
         int receive_numbytes = recvfrom(s, &received_packet, sizeof(packet), 0, (struct sockaddr *)&si_other, (socklen_t *)&slen);
-        std::cout << "\n========================================\nReceived bytes: " << receive_numbytes <<" Type: "<< received_packet.packet_type<<" (PACKET_TYPE_ACK id 2) \n";
-
+        // std::cout << "\n========================================\nReceived bytes: " << receive_numbytes <<" Type: "<< received_packet.packet_type << " (PACKET_TYPE_ACK id 2) \n";
         if (receive_numbytes == -1){
             timeout = true;
+            timeout_cnt ++;
+
             dup_ack_cnt = 0;
-            is_new_ack = 0;
+            // std::cout<<"TIME OUT Count: "<<timeout_cnt<<" state: "<<running_phase <<"\n";
+            if(timeout_cnt>5 and all_packet_sent) break;
         }
         
-        if (received_packet.packet_type == PACKET_TYPE_START){
-            send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
-            expected_ack_num = 1;
-            continue;
-        }
-
         received_ack_num = received_packet.seq_num;
-        std::cout << "Received ack: " << received_ack_num << "; Expected ack: "<<  expected_ack_num << "\n" << "CURRENT TIME: "<<std::time(0)<<"\n";
-        if (received_ack_num >= int(bytesToTransfer / MAXWINDOWSIZE)) break; // All packages are transferrd, End
+        // std::cout << "Received ack: " << received_ack_num << "; Expected ack: "<<  expected_ack_num << "\n";
+        // std::cout << "CW: " << cw <<" SST: "<< sst << " STATE: "<<running_phase<<"\n";
+        if (received_ack_num >= int(bytesToTransfer / MAXWINDOWSIZE)-1) break;
 
         if (received_ack_num >= expected_ack_num){
+            // for (int i = expected_ack_num; i <= received_ack_num; i++){
+            //         packet_buffer_check[i % MAXWINDOWSIZE] = -1;
+            //         packet_buffer[i % MAXWINDOWSIZE].seq_num = -1;
+            //         packet_buffer[i % MAXWINDOWSIZE].content_size = 0;
+            //         strcpy(packet_buffer[i % MAXWINDOWSIZE].content, "");
+            //     }
             is_new_ack = true;
-            expected_ack_num = received_ack_num;
+            timeout_cnt = 0;
+            expected_ack_num = received_ack_num + 1;
         }
-        else if (received_ack_num == -1){
-            timeout = true;
-        }
-        else if (received_ack_num < expected_ack_num-1){
+        if ((received_ack_num < (expected_ack_num-1)) & timeout==false){
+            // std::cout << "SMALL ACK: " << received_ack_num << " Expected - 1: "<<(expected_ack_num-1) <<"\n";
             continue;
         }
-        else if (received_ack_num == expected_ack_num-1)
-        {
+        if (received_ack_num == (expected_ack_num-1)){
             dup_ack_cnt ++;
         }
-        
+        // std::cout << "----PHASE: " << running_phase << "\n";
         if (running_phase == PHASE_SLOWSTART){
-            // **** IF New Ack
             if (is_new_ack){
-                cw ++;
+                // std::cout << "----PHASE: " << running_phase << " IS NEW ACK.\n";
+                if (cw < MAXWINDOWSIZE){
+                    cw ++;
+                }
                 dup_ack_cnt = 0;
-
-                // ***** Send Packet
-                send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
-
-                // ***** Extend the timer
+                send_bytes = send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
             }
-            
-            // **** IF Dup Ack
-            else if (is_new_ack == false & dup_ack_cnt > 0){
+            if ((is_new_ack == false) & (dup_ack_cnt > 0)){
+                // std::cout << "----PHASE: " << running_phase << " IS DUP.\n";
                 if (dup_ack_cnt >= 3){
                     sst = cw/2;
                     cw = sst;
                     cw = cw + 3;
                     running_phase = PHASE_FAST_RECOVERY;
-
-                    // ***** Send Packet
-                    send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
+                    send_bytes = send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
                 }
             }
             // **** IF TIMEOUT: Resend
-            else if (timeout){
-                std::cout << "----PHASE: " << running_phase << " TIMEOUT.\n";
+            if (timeout){
+                // std::cout << "----PHASE: " << running_phase << " TIMEOUT.\n";
                 sst = cw/2;
                 cw = 1;
                 dup_ack_cnt = 0;
-                send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer, timeout);
+                send_bytes = send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer, timeout=true);
             }
             
             // *** IF CW is larger than SST -> go into the CONGESTION_AVOIDANCE STAGE
@@ -220,28 +240,31 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
         else if (running_phase == PHASE_CONGESTION_AVOIDANCE){
             // **** IF New Ack
             if (is_new_ack){
+                // std::cout << "----PHASE: " << running_phase << " IS NEW ACK.\n";
                 cw = cw + 1/cw;
                 dup_ack_cnt = 0;
-                send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
+                send_bytes = send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
             }
             // **** IF Dup Ack - >= 3: Resend oder(Ack+1) packet
-            else if (is_new_ack == false & dup_ack_cnt > 0){
+            if ((is_new_ack == false) & (dup_ack_cnt > 0)){
+                // std::cout << "----PHASE: " << running_phase << " IS NEW DUP.\n";
                 if (dup_ack_cnt >= 3){
                     sst = cw/2;
                     cw = sst;
                     cw = cw + 3;
-                    send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
+                    send_bytes = send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
 
                     running_phase = PHASE_FAST_RECOVERY;
                 }
             }
             // **** IF TIMEOUT: Resend
-            else if (timeout){
-                std::cout << "----PHASE: " << running_phase << " TIMEOUT.\n";
+            if (timeout){
+                // std::cout << "----PHASE: " << running_phase << " TIMEOUT.\n";
                 sst = cw/2;
                 cw = 1;
                 dup_ack_cnt = 0;
-                send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer, timeout);
+                send_bytes = send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer, timeout=true);
+                running_phase = PHASE_SLOWSTART;
             }
         }
         else if (running_phase == PHASE_FAST_RECOVERY){
@@ -249,29 +272,31 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
             if (is_new_ack){
                 cw = sst;
                 dup_ack_cnt = 0;
-                send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
+                send_bytes = send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
+                running_phase = PHASE_CONGESTION_AVOIDANCE;
             }
             // **** IF Dup Ack - >= 3: Resend oder(Ack+1) packet
-            else if (dup_ack_cnt > 0){
-                cw = cw + 1.0;
-                send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
+            if (dup_ack_cnt > 0){
+                cw = cw + 1;
+                send_bytes = send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer);
             }
             // **** IF TIMEOUT: Resend
-            else if (timeout){
-                std::cout << "----PHASE: " << running_phase << " TIMEOUT.\n";
+            if (timeout){
+                // std::cout << "----PHASE: " << running_phase << " TIMEOUT.\n";
                 sst = cw/2;
                 cw = 1;
                 dup_ack_cnt = 0;
-                send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer, timeout);
+                send_bytes = send_packet(file_ptr, expected_ack_num, cw, bytesToTransfer, timeout=true);
                 running_phase = PHASE_SLOWSTART;
             }
         }
+        if (send_bytes == 0) all_packet_sent = true;
     }
     // *** Sent the ending packet
     packet packet_end;
     packet_end.packet_type = PACKET_TYPE_FINISH;
     packet_end.seq_num = -1;
-    std::cout << "\n\nSENDING THE END POCKET: " << packet_end.packet_type << "\n";
+    // std::cout << "\n\nSENDING THE END POCKET: " << packet_end.packet_type << "\n";
     sendto(s, &(packet_end), sizeof(packet), 0, (struct sockaddr *)&si_other, slen);
 
     // *** End the connection
