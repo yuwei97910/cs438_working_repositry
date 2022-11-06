@@ -24,9 +24,10 @@
 #include <iostream>
 
 // #define MAXDATASIZE 1472
-#define MAXDATASIZE 1200
+#define MAXDATASIZE 1400
 #define MAXWINDOWSIZE 1000
 #define MAXTIME 80000
+
 #define PHASE_SLOWSTART 0
 #define PHASE_CONGESTION_AVOIDANCE 1
 #define PHASE_FAST_RECOVERY 2
@@ -56,6 +57,17 @@ void diep(char *s) {
     perror(s);
     exit(1);
 }
+
+void set_timeout(int sockfd, int timeout_value=MAXTIME){
+    struct timeval timer;
+    timer.tv_sec = 0;
+    timer.tv_usec = timeout_value;
+    int ret = setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timer, sizeof(timer));
+    if (ret==-1){
+        perror("SET TIMEOUT");
+    }
+}
+
 
 int send_packet(FILE *file_ptr, long long int base_packet_id, float cw, long long int bytesToTransfer, bool timeout=false){
     int sent_bytes = 0;
@@ -147,14 +159,14 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     int running_phase = PHASE_SLOWSTART;
     bool all_packet_sent = false;
     // *** A Timer (timer extend the time when receive new ack)
-    struct timeval timer;
-    timer.tv_sec = 0;
-    timer.tv_usec = MAXTIME;
-    int ret = setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timer, sizeof(timer));
-    if (ret==-1){
-        perror("SET TIMEOUT");
-    }
-
+    // struct timeval timer;
+    // timer.tv_sec = 0;
+    // timer.tv_usec = MAXTIME;
+    // int ret = setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timer, sizeof(timer));
+    // if (ret==-1){
+    //     perror("SET TIMEOUT");
+    // }
+    set_timeout(s);
     for (int i=0; i<MAXWINDOWSIZE; i++){
         packet_buffer_check[i] = -1;
 
@@ -198,6 +210,8 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
             is_new_ack = true;
             timeout_cnt = 0;
             expected_ack_num = received_ack_num + 1;
+
+            set_timeout(s);
         }
         if ((received_ack_num < (expected_ack_num-1)) & timeout==false){
             // std::cout << "SMALL ACK: " << received_ack_num << " Expected - 1: "<<(expected_ack_num-1) <<"\n";

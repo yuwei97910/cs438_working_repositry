@@ -18,9 +18,8 @@
 
 #include <iostream>
 // using namespace std;
-#define MAXDATASIZE 1200
+#define MAXDATASIZE 1400
 #define MAXWINDOWSIZE 1000
-#define MAXTIME 80000
 
 struct sockaddr_in si_me, si_other;
 int s;
