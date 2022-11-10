@@ -307,7 +307,7 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
             }
         }
         if (send_bytes == 0) {
-            expected_ack_num += -1;
+            // expected_ack_num += -1; // Why here is a -1 
             all_packet_sent = true;
         }
     }
