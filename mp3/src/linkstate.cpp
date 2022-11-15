@@ -1,47 +1,48 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <string>
 #include <fstream>
 #include <iostream>
 #include <vector>
-#include <map>
-#include <set>
-
-#define MAXSIZE 100000
+#include <map> // for implementing graph
+#include <set> 
+#include <queue> // for implementing queue
+#include <algorithm> // for reverse
 
 using namespace std;
 
+typedef pair<int, int> dv_pair;
 typedef struct Message
 {
     int source;
     int dest;
     string content;
-    Message(int source, int dest, string message)
-    {
-        source = source;
-        dest = dest;
-        content = message;
-    }
 } Message;
 vector<Message> message_list;
-map<int, map<int, pair<int, int>>> forward_table; // source, destionation, <next, cost>
+map<int, map<int, pair<int, int> > > forward_table; // source, destionation, <next, cost>
 
-// set<int> nodes;
-vector<vector<int>> graph;
 int nodes_cnt; // number of nodes
+set<int> nodes; // nodes' num
+vector<vector<int> > graph;
+ofstream fpOut;
 
-void init_graph(ifstream &topo_file)
+void count_nodes(ifstream &topo_file)
 {
     int source, dest, cost;
     while (topo_file >> source >> dest >> cost)
     {
-        // nodes.insert(source);
-        // nodes.insert(dest);
-        graph[source][dest] = cost;
-        graph[dest][source] = cost;
+        nodes.insert(source);
+        nodes.insert(dest);
     }
-    nodes_cnt = graph.size();
+    cout << "Nodes count: " << nodes.size() << "\n";
+    nodes_cnt = nodes.size();
+}
+
+void init_graph(ifstream &topo_file)
+{
+    int source, dest, cost;
 
     // construct the graph
     for (int row = 0; row < nodes_cnt + 1; row++)
@@ -57,25 +58,36 @@ void init_graph(ifstream &topo_file)
         graph.push_back(v1);
         v1.clear();
     }
+
+    while (topo_file >> source >> dest >> cost)
+    {
+        graph[source][dest] = cost;
+        graph[dest][source] = cost;
+    }
 }
 
 void read_message(ifstream &msg_file)
 {
     int source, dest;
     string line, message_str;
-    while (msg_file)
+    while (getline(msg_file, line))
     {
-        getline(msg_file, line);
         sscanf(line.c_str(), "%d %d %*s", &source, &dest);
         message_str = line.substr(line.find(" "));
         message_str = message_str.substr(line.find(" ") + 1);
-        Message message(source, dest, message_str);
+
+        Message message;
+        message.source = source;
+        message.dest = dest;
+        message.content = message_str;
+
+        cout << message.source << " " << message.dest << " "<< message.content << "\n";
 
         message_list.push_back(message);
     }
 }
 
-void send_message(fstream &fpOut)
+void send_message()
 {
     // send message
     for (int i = 0; i < message_list.size(); i++)
@@ -84,33 +96,113 @@ void send_message(fstream &fpOut)
         int dest = message_list[i].dest;
         string content = message_list[i].content;
 
-        int nextHop = source;
+        int next = source;
+        // The destination is not reachable.
         if (forward_table.find(source) == forward_table.end() ||
             forward_table[source].find(dest) == forward_table[source].end())
-        { // The destination is not reachable.
-            fpOut << "from " << source << " to " << dest << " cost infinite hops unreachable message"
-                  << content << endl;
+        {
+            fpOut << "from " << source << " to " << dest << " cost infinite hops unreachable message" << content << endl;
         }
         else
         {
             fpOut << "from " << source << " to " << dest << " cost " << forward_table[source][dest].second;
             fpOut << " hops ";
-            while (nextHop != dest)
+            while (next != dest)
             {
-                fpOut << nextHop << " ";
-                nextHop = forward_table[nextHop][dest].first;
+                fpOut << next << " ";
+                next = forward_table[next][dest].first;
             }
             fpOut << "message" << content << endl;
         }
     }
 }
 
-void dijkstra(int node)
+vector<int> get_neighbor(int v)
 {
-
+    vector<int> neighbors;
+    for (int node = 1; node < nodes_cnt + 1; node++)
+    {
+        if (graph[v][node] > 0)
+            neighbors.push_back(node);
+    }
+    return neighbors;
 }
 
-void get_shortest_path(fstream &fpOut){
+vector<int> get_path(vector<int> parent, int node, int dest)
+{
+    int cur = dest;
+    vector<int> path;
+    while (cur != node)
+    {
+        path.push_back(cur);
+        cur = parent[cur];
+    }
+    path.push_back(cur);
+    reverse(path.begin(), path.end());
+    return path;
+}
+
+void dijkstra(int node)
+{
+    priority_queue<dv_pair, vector<dv_pair>, greater<dv_pair> > frontier;
+    vector<int> dist_to(nodes_cnt + 1, INT_MAX);
+    vector<int> parent(nodes_cnt + 1, node);
+    vector<bool> marked(nodes_cnt + 1, false);
+
+    dist_to[node] = 0;
+    marked[node] = true;
+    frontier.push(make_pair(0, node));
+    while (!frontier.empty())
+    {
+        int v = frontier.top().second;
+        frontier.pop();
+
+        for (int w : get_neighbor(v))
+        {
+            if (dist_to[w] >= dist_to[v] + graph[v][w])
+            {
+                if (dist_to[w] > dist_to[v] + graph[v][w])
+                {
+                    dist_to[w] = dist_to[v] + graph[v][w];
+                    parent[w] = v;
+                    marked[w] = true;
+                    frontier.push(make_pair(dist_to[w], w));
+                }
+                else
+                {
+                    if (parent[w] < v)
+                    {
+                        marked[w] = true;
+                        frontier.push(make_pair(dist_to[w], w));
+                    }
+                    else
+                    {
+                        parent[w] = v;
+                        marked[w] = true;
+                        frontier.push(make_pair(dist_to[w], w));
+                    }
+                }
+            }
+        }
+    }
+
+    for (int dest = 1; dest < nodes_cnt + 1; dest++)
+    {
+        if (marked[dest])
+        { 
+            // path from source to dest
+            vector<int> path = get_path(parent, node, dest);
+            if (node != dest)
+                forward_table[node][dest] = make_pair(path[1], dist_to[dest]);
+            else
+                forward_table[node][dest] = make_pair(path[0], dist_to[dest]);
+            fpOut << dest << " " << forward_table[node][dest].first << " " << forward_table[node][dest].second << endl;
+        }
+    }
+}
+
+void get_shortest_path()
+{
     for (int node = 1; node < nodes_cnt + 1; node++)
     {
         dijkstra(node);
@@ -118,7 +210,7 @@ void get_shortest_path(fstream &fpOut){
     }
 }
 
-void process_change(ifstream &change_file, fstream &fpOut)
+void process_change(ifstream &change_file)
 {
     int source, dest, cost;
     while (change_file >> source >> dest >> cost)
@@ -126,14 +218,13 @@ void process_change(ifstream &change_file, fstream &fpOut)
         graph[source][dest] = cost;
         graph[dest][source] = cost;
         forward_table.clear();
-        get_shortest_path(fpOut);
-        send_message(fpOut);
+        get_shortest_path();
+        send_message();
     }
 }
 
 int main(int argc, char **argv)
 {
-    // printf("Number of arguments: %d", argc);
     if (argc != 4)
     {
         printf("Usage: ./linkstate topofile messagefile changesfile\n");
@@ -142,24 +233,32 @@ int main(int argc, char **argv)
     string topo_file_name = argv[1];
     string msg_file_name = argv[2];
     string change_file_name = argv[3];
-    
-    fstream fpOut;
+
     fpOut.open("output.txt");
 
     // Topo file - Initialization
-    ifstream topo_file(topo_file_name);
+    ifstream topo_file;
+    topo_file.open(topo_file_name);
+    count_nodes(topo_file);
+    topo_file.close();
+    
+    topo_file.open(topo_file_name);
     init_graph(topo_file);
     topo_file.close();
-
+    
     // Message File - Send all messages
-    ifstream msg_file(msg_file_name);
+    ifstream msg_file;
+    msg_file.open(msg_file_name);
     read_message(msg_file);
-    send_message(fpOut);
     msg_file.close();
 
+    get_shortest_path();
+    send_message();
+    
     // Change File
-    ifstream change_file(change_file_name);
-    process_change(change_file, fpOut);
+    ifstream change_file;
+    change_file.open(change_file_name);
+    process_change(change_file);
     change_file.close();
 
     fpOut.close();
