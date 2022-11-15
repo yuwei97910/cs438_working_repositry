@@ -145,46 +145,40 @@ vector<int> get_path(vector<int> parent, int node, int dest)
 void dijkstra(int node)
 {
     priority_queue<dv_pair, vector<dv_pair>, greater<dv_pair> > frontier;
-    vector<int> dist_to(nodes_cnt + 1, INT_MAX);
+    vector<int> distance(nodes_cnt + 1, INT_MAX);
     vector<int> parent(nodes_cnt + 1, node);
     vector<bool> marked(nodes_cnt + 1, false);
 
-    dist_to[node] = 0;
+    distance[node] = 0;
     marked[node] = true;
     frontier.push(make_pair(0, node));
     while (!frontier.empty())
     {
-        int v = frontier.top().second;
+        int top_node = frontier.top().second;
         frontier.pop();
-
-        for (int w : get_neighbor(v))
+        
+        for (int neighbor : get_neighbor(top_node))
         {
-            if (dist_to[w] >= dist_to[v] + graph[v][w])
+            if (distance[neighbor] > distance[top_node] + graph[top_node][neighbor])
             {
-                if (dist_to[w] > dist_to[v] + graph[v][w])
-                {
-                    dist_to[w] = dist_to[v] + graph[v][w];
-                    parent[w] = v;
-                    marked[w] = true;
-                    frontier.push(make_pair(dist_to[w], w));
-                }
-                else
-                {
-                    if (parent[w] < v)
-                    {
-                        marked[w] = true;
-                        frontier.push(make_pair(dist_to[w], w));
-                    }
-                    else
-                    {
-                        parent[w] = v;
-                        marked[w] = true;
-                        frontier.push(make_pair(dist_to[w], w));
-                    }
-                }
+                distance[neighbor] = distance[top_node] + graph[top_node][neighbor];
+                parent[neighbor] = top_node;
+                marked[neighbor] = true;
+
+                frontier.push(make_pair(distance[neighbor], neighbor));
+            }
+            else if (distance[neighbor] == distance[top_node] + graph[top_node][neighbor])
+            {
+                marked[neighbor] = true;
+                if (parent[neighbor] >= top_node)
+                    parent[neighbor] = top_node;
+
+                frontier.push(make_pair(distance[neighbor], neighbor));
             }
         }
+            
     }
+    
 
     for (int dest = 1; dest < nodes_cnt + 1; dest++)
     {
@@ -193,9 +187,9 @@ void dijkstra(int node)
             // path from source to dest
             vector<int> path = get_path(parent, node, dest);
             if (node != dest)
-                forward_table[node][dest] = make_pair(path[1], dist_to[dest]);
+                forward_table[node][dest] = make_pair(path[1], distance[dest]);
             else
-                forward_table[node][dest] = make_pair(path[0], dist_to[dest]);
+                forward_table[node][dest] = make_pair(path[0], distance[dest]);
             fpOut << dest << " " << forward_table[node][dest].first << " " << forward_table[node][dest].second << endl;
         }
     }
